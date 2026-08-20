@@ -1,4 +1,5 @@
 import { Application, Router } from "@oak/oak";
+import { wakeDevice } from "../../04-keenetic-wol/keenetic.ts";
 
 import {
   getConfig,
@@ -242,6 +243,44 @@ router.post("/api/login", async (context) => {
     return;
   }
 
+  const config = await getConfig();
+
+  if (!config) {
+    context.response.status = 500;
+    context.response.body = {
+      success: false,
+      message: "Gateway configuration is not available.",
+    };
+    return;
+  }
+
+  const device = config.devices[0];
+
+  if (!device) {
+    context.response.status = 500;
+    context.response.body = {
+      success: false,
+      message: "No Wake-on-LAN device is configured.",
+    };
+    return;
+  }
+
+  const wakeResult = await wakeDevice(device.mac, {
+    keeneticUrl: config.keeneticUrl,
+    keeneticUser: config.keeneticUser,
+    keeneticPassword: config.keeneticPassword,
+  });
+
+  if (!wakeResult.success) {
+    context.response.status = 502;
+    context.response.body = {
+      success: false,
+      message: "Wake-on-LAN request failed.",
+      detail: wakeResult.message,
+    };
+    return;
+  }
+
   const session = createSession("gateway-user");
 
   context.cookies.set("session", session.token, {
@@ -254,10 +293,11 @@ router.post("/api/login", async (context) => {
 
   context.response.body = {
     success: true,
-    message: "Login successful.",
+    message: "Login successful. Wake-on-LAN packet sent.",
     expiresAt: session.expiresAt,
   };
 });
+
 
 router.post("/api/logout", (context) => {
   const token = getSessionToken(context);
