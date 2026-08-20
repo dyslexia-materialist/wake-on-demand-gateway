@@ -243,6 +243,151 @@ This module:
 - Does not provide authentication by itself.
 - Should be called through a protected gateway or application.
 
+
+## Deno Usage
+
+The included `keenetic.ts` implementation uses Deno and can be imported into
+another Deno application.
+
+### Requirements
+
+- Deno 2.x or newer
+- Network access to the Keenetic router
+- A Keenetic user with Wake-on-LAN permission
+
+Check the Deno version:
+
+```bash
+deno --version
+```
+
+### Example
+
+Create a file named `example.ts`:
+
+```typescript
+import { wakeDevice } from "./keenetic.ts";
+
+const result = await wakeDevice(
+  "AA:BB:CC:DD:EE:FF",
+  {
+    keeneticUrl: "https://router.example.local",
+    keeneticUser: "wake-user",
+    keeneticPassword: "replace-me",
+  },
+);
+
+console.log(result);
+```
+
+Run it with:
+
+```bash
+deno run --allow-net example.ts
+```
+
+Expected successful result:
+
+```json
+{
+  "success": true,
+  "mac": "aa:bb:cc:dd:ee:ff",
+  "message": "Wake-on-LAN packet sent successfully."
+}
+```
+
+### Using Environment Variables
+
+Do not hard-code credentials in the source code.
+
+Example:
+
+```bash
+export KEENETIC_URL="https://router.example.local"
+export KEENETIC_USER="wake-user"
+export KEENETIC_PASSWORD="replace-me"
+export TARGET_MAC="AA:BB:CC:DD:EE:FF"
+```
+
+Example usage:
+
+```typescript
+import { wakeDevice } from "./keenetic.ts";
+
+const keeneticUrl = Deno.env.get("KEENETIC_URL");
+const keeneticUser = Deno.env.get("KEENETIC_USER");
+const keeneticPassword = Deno.env.get("KEENETIC_PASSWORD");
+const targetMac = Deno.env.get("TARGET_MAC");
+
+if (!keeneticUrl || !keeneticUser || !keeneticPassword || !targetMac) {
+  throw new Error("Required environment variables are missing.");
+}
+
+const result = await wakeDevice(targetMac, {
+  keeneticUrl,
+  keeneticUser,
+  keeneticPassword,
+});
+
+console.log(result);
+```
+
+Run it with:
+
+```bash
+deno run --allow-net --allow-env example.ts
+```
+
+### Permission Model
+
+Deno uses explicit permissions.
+
+The example requires:
+
+```text
+--allow-net
+```
+
+because it connects to the Keenetic router.
+
+When environment variables are used, it also requires:
+
+```text
+--allow-env
+```
+
+Avoid using:
+
+```bash
+deno run -A
+```
+
+in production unless all permissions are fully understood.
+
+## Using Another Language
+
+The Keenetic API flow is not limited to Deno.
+
+The same process can be implemented in:
+
+- Python
+- Go
+- Node.js
+- Rust
+- Shell scripts with `curl`
+
+The required sequence is:
+
+```text
+1. Request /auth.
+2. Read the challenge and realm.
+3. Calculate the challenge-response hash.
+4. Authenticate and receive a session cookie.
+5. Send a POST request to /rci/ip/hotspot/wake.
+```
+
+The TypeScript implementation is provided as a reusable Deno module.
+
 ## License
 
 This module is part of the Wake-on-Demand Gateway project and is licensed
