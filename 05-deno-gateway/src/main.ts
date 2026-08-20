@@ -1,5 +1,6 @@
 import { Application, Router } from "@oak/oak";
 import { wakeDevice } from "../../04-keenetic-wol/keenetic.ts";
+import { waitForTarget } from "./readiness.ts";
 
 import {
   getConfig,
@@ -280,6 +281,28 @@ router.post("/api/login", async (context) => {
     };
     return;
   }
+
+  const readinessResult = await waitForTarget(
+  config.serviceUrl,
+  {
+    maxWaitMs: 90_000,
+    retryIntervalMs: 2_000,
+    onRetry: (attempt, error) => {
+      console.log(
+        `Target readiness attempt ${attempt} failed: ${error}`,
+      );
+    },
+  },
+);
+
+if (!readinessResult.ready) {
+  context.response.status = 504;
+  context.response.body = {
+    success: false,
+    message: "Target server did not become ready in time.",
+  };
+  return;
+}
 
   const session = createSession("gateway-user");
 
