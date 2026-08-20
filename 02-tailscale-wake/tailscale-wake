@@ -1,0 +1,12 @@
+#!/bin/sh
+
+case "$1" in
+    post)
+        # Run recovery asynchronously after the system resumes.
+        systemd-run \
+            --unit=tailscale-wake-recovery.service \
+            --collect \
+            --no-block \
+            /usr/local/bin/tailscale-wake.sh
+        ;;
+esac
