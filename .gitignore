@@ -1,0 +1,55 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Secrets and credentials
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cert
+
+# SSH keys
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+known_hosts
+
+# Deno
+.deno/
+deno.lock
+
+# Local Deno KV databases
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
+# Runtime and application data
+data/
+runtime/
+tmp/
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary and backup files
+*.bak
+*.backup
+*.tmp
+*~
