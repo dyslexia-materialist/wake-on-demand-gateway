@@ -1,0 +1,35 @@
+services:
+  wake-on-demand-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: wake-on-demand-gateway
+
+    restart: unless-stopped
+    init: true
+
+    ports:
+      # Bind only to localhost.
+      # Tailscale Serve or Funnel can expose this port.
+      - "127.0.0.1:6910:6910"
+
+    env_file:
+      - .env
+
+    environment:
+      PORT: "6910"
+      DENO_KV_PATH: "/data/gateway.sqlite3"
+
+    volumes:
+      - gateway-data:/data
+
+    networks:
+      - gateway-network
+
+volumes:
+  gateway-data:
+
+networks:
+  gateway-network:
+    driver: bridge
