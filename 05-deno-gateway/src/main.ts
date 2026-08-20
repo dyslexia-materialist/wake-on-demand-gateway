@@ -1,6 +1,7 @@
 import { Application, Router } from "@oak/oak";
 import { wakeDevice } from "../../04-keenetic-wol/keenetic.ts";
 import { waitForTarget } from "./readiness.ts";
+import { proxyRequest } from "./proxy.ts";
 
 import {
   getConfig,
@@ -314,12 +315,7 @@ if (!readinessResult.ready) {
     path: "/",
   });
 
-  context.response.body = {
-    success: true,
-    message: "Login successful. Wake-on-LAN packet sent.",
-    expiresAt: session.expiresAt,
-  };
-});
+  context.response.redirect(`/go/${session.token}/`);
 
 
 router.post("/api/logout", (context) => {
@@ -359,6 +355,72 @@ app.use(async (context, next) => {
   context.response.headers.set("Referrer-Policy", "no-referrer");
 
   await next();
+});
+
+app.use(async (context, next) => {
+  const pathname = context.request.url.pathname;
+
+  if (!pathname.startsWith("/go/")) {
+    await next();
+    return;
+  }
+
+  const rest = pathname.slice("/go/".length);
+  const separatorIndex = rest.indexOf("/");
+
+  const token = separatorIndex === -1
+    ? rest
+    : rest.slice(0, separatorIndex);
+
+  const targetPath = separatorIndex === -1
+    ? "/"
+    : rest.slice(separatorIndex);
+
+  if (!token || token.length < 20) {
+    context.response.status = 401;
+    context.response.body = "Unauthorized";
+    return;
+  }
+
+  const session = getSession(token);
+
+  if (!session) {
+    context.response.status = 401;
+    context.response.body = "Session expired or invalid.";
+    return;
+  }
+
+  const config = await getConfig();
+
+  if (!config) {
+    context.response.status = 500;
+    context.response.body = "Gateway configuration is unavailable.";
+    return;
+  }
+
+  try {
+    const upstreamResponse = await proxyRequest(
+      context.request.source,
+      config.serviceUrl,
+      targetPath,
+      context.request.url.search,
+    );
+
+    context.response.status = upstreamResponse.status;
+
+    for (const [name, value] of upstreamResponse.headers.entries()) {
+      context.response.headers.set(name, value);
+    }
+
+    context.response.body = upstreamResponse.body;
+  } catch (error) {
+    console.error("Proxy request failed:", error);
+
+    context.response.status = 502;
+    context.response.body = {
+      error: "Proxy request failed.",
+    };
+  }
 });
 
 app.use(router.routes());
