@@ -1,249 +1,392 @@
-# Docker Recovery
+# Keenetic Wake-on-LAN
 
-The Docker Recovery module restores and verifies Docker services after a Linux
-server resumes from suspend.
+This module sends Wake-on-LAN requests through a Keenetic router using the
+Keenetic API.
 
-A system may wake up successfully while:
+It is useful when the target Linux server is asleep and the Wake-on-LAN
+packet must be sent by a device that remains online.
 
-- The Docker daemon is still starting.
-- A container has stopped.
-- A container is restarting.
-- The application inside a container is not ready yet.
-
-This module helps restore the required Docker services and optionally checks
-whether the target application is responding.
-
-## Recovery Flow
+## Architecture
 
 ```text
-The system resumes
-        |
-        v
-Check Docker service
-        |
-        +-- Docker is inactive: start Docker
-        |
-        v
-Check required containers
-        |
-        +-- Container is stopped: start container
-        |
-        v
-Wait for the application
-        |
-        v
-Run readiness check
+Client or gateway
+       |
+       v
+Keenetic API authentication
+       |
+       v
+Keenetic Wake-on-LAN endpoint
+       |
+       v
+Magic packet
+       |
+       v
+Sleeping server
 ```
 
 ## Features
 
-- Checks the Docker daemon
-- Starts Docker when necessary
-- Starts selected containers
-- Waits for container startup
-- Supports HTTP readiness checks
-- Logs recovery events
-- Can run independently from Tailscale and Keenetic
+- Keenetic API authentication
+- Challenge-response login
+- Session cookie handling
+- Wake-on-LAN request
+- Configurable target MAC address
+- No direct access to the sleeping server required
 
 ## Requirements
 
-- Linux with systemd
-- Docker Engine
-- Docker CLI
-- Root privileges
-- Optional: `curl` for HTTP readiness checks
+- Keenetic router with API access enabled
+- A Keenetic user with permission to send Wake-on-LAN packets
+- Network access to the router
+- A valid target MAC address
+- Deno, if using the TypeScript implementation
 
-## Module Files
+## Important Keenetic Permissions
+
+A read-only Keenetic user may be unable to trigger Wake-on-LAN.
+
+The account used by this module must have:
+
+- Access to the Keenetic web interface
+- Permission to perform configuration-changing actions
+- Permission to send Wake-on-LAN packets
+
+If available, start with the least-privileged write permission that allows the
+Wake-on-LAN action. Full administrator access should only be used when
+necessary.
+
+## API Flow
+
+The module generally follows this flow:
 
 ```text
-03-docker-recovery/
-├── README.md
-└── docker-recovery.sh
+GET /auth
+       |
+       +-- HTTP 200: session already available
+       |
+       +-- HTTP 401: challenge and realm returned
+                    |
+                    v
+             Calculate response hash
+                    |
+                    v
+             POST /auth
+                    |
+                    v
+             Receive session cookie
+                    |
+                    v
+             POST /rci/ip/hotspot/wake
 ```
 
 ## Configuration
 
-The configuration is defined at the top of `docker-recovery.sh`.
+Example configuration:
+
+```typescript
+const settings = {
+  keeneticUrl: "https://router.example.local",
+  keeneticUser: "wake-user",
+  keeneticPassword: "replace-me",
+  targetMac: "AA:BB:CC:DD:EE:FF",
+};
+```
+
+Do not commit real values to the repository.
+
+Use environment variables or a secret manager instead:
+
+```text
+KEENETIC_URL=
+KEENETIC_USER=
+KEENETIC_PASSWORD=
+TARGET_MAC=
+```
+
+## Example API Request
+
+The Wake-on-LAN request uses the Keenetic API endpoint:
+
+```text
+POST /rci/ip/hotspot/wake
+```
+
+Example request body:
+
+```json
+{
+  "mac": "aa:bb:cc:dd:ee:ff"
+}
+```
+
+The exact response may vary depending on the Keenetic firmware version.
+
+## Security Warnings
+
+This module can wake a device on the local network and uses router
+credentials.
+
+- Never commit router credentials.
+- Never place credentials directly in public source code.
+- Use a dedicated Keenetic user for Wake-on-LAN.
+- Use the least-privileged account that supports the required action.
+- Do not expose the Keenetic API directly to the public internet.
+- Do not accept arbitrary MAC addresses from unauthenticated users.
+- Validate MAC address format before sending a request.
+- Rate-limit Wake-on-LAN requests.
+- Log the result of the request without logging passwords or session cookies.
+- Protect session cookies in memory and do not write them to public logs.
+- Use HTTPS when communicating with the router whenever possible.
+- Review TLS certificate validation before disabling it.
+- Do not disable TLS verification as a permanent solution.
+
+## MAC Address Validation
+
+A valid MAC address should be checked before sending the request.
+
+Example validation pattern:
+
+```typescript
+const macPattern =
+  /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+
+if (!macPattern.test(targetMac)) {
+  throw new Error("Invalid MAC address");
+}
+```
+
+## Error Handling
+
+The caller should distinguish between:
+
+- Router connection failure
+- Authentication failure
+- Permission failure
+- Invalid MAC address
+- Wake-on-LAN request failure
+- Network timeout
+
+Example result:
+
+```typescript
+{
+  success: false,
+  message: "Router authentication failed"
+}
+```
+
+Avoid returning sensitive details to public users.
+
+Detailed errors should be written only to protected server logs.
+
+## Testing
+
+Before connecting this module to a public gateway, test it locally:
+
+```text
+1. Confirm the target server is asleep.
+2. Run the module manually.
+3. Confirm the router accepts the request.
+4. Confirm the target server wakes.
+5. Verify the result in the router logs.
+```
+
+If possible, test with a dedicated test device before using the main server.
+
+## Troubleshooting
+
+### HTTP 401 from the router
+
+Possible causes:
+
+- Incorrect username or password
+- Incorrect challenge-response calculation
+- Expired session cookie
+- Firmware-specific authentication behavior
+
+### HTTP 403 from the router
+
+Possible causes:
+
+- User has read-only permissions
+- User cannot access the web interface
+- User cannot trigger Wake-on-LAN
+- Router policy blocks the action
+
+### HTTP 404 from the router
+
+Possible causes:
+
+- Unsupported firmware version
+- Incorrect API endpoint
+- Incorrect router URL
+- API path changed in the firmware
+
+### The request succeeds but the server does not wake
+
+Check:
+
+- Target MAC address
+- BIOS/UEFI Wake-on-LAN settings
+- Network adapter power settings
+- Ethernet cable and switch state
+- Router’s known device list
+- Whether the server supports wake from the selected sleep state
+
+## Limitations
+
+This module:
+
+- Depends on Keenetic API behavior.
+- Does not guarantee that the target device supports Wake-on-LAN.
+- Does not verify that the operating system has fully booted.
+- Does not provide authentication by itself.
+- Should be called through a protected gateway or application.
+
+
+## Deno Usage
+
+The included `keenetic.ts` implementation uses Deno and can be imported into
+another Deno application.
+
+### Requirements
+
+- Deno 2.x or newer
+- Network access to the Keenetic router
+- A Keenetic user with Wake-on-LAN permission
+
+Check the Deno version:
+
+```bash
+deno --version
+```
+
+### Example
+
+Create a file named `example.ts`:
+
+```typescript
+import { wakeDevice } from "./keenetic.ts";
+
+const result = await wakeDevice(
+  "AA:BB:CC:DD:EE:FF",
+  {
+    keeneticUrl: "https://router.example.local",
+    keeneticUser: "wake-user",
+    keeneticPassword: "replace-me",
+  },
+);
+
+console.log(result);
+```
+
+Run it with:
+
+```bash
+deno run --allow-net example.ts
+```
+
+Expected successful result:
+
+```json
+{
+  "success": true,
+  "mac": "aa:bb:cc:dd:ee:ff",
+  "message": "Wake-on-LAN packet sent successfully."
+}
+```
+
+### Using Environment Variables
+
+Do not hard-code credentials in the source code.
 
 Example:
 
 ```bash
-DOCKER_SERVICE="docker"
-CONTAINERS=("tapu-agent")
-READINESS_URL="http://127.0.0.1:8000"
-MAX_WAIT_SECONDS=60
-CHECK_INTERVAL_SECONDS=2
+export KEENETIC_URL="https://router.example.local"
+export KEENETIC_USER="wake-user"
+export KEENETIC_PASSWORD="replace-me"
+export TARGET_MAC="AA:BB:CC:DD:EE:FF"
 ```
 
-| Variable | Description | Default |
-|---|---|---|
-| `DOCKER_SERVICE` | Docker systemd service name | `docker` |
-| `CONTAINERS` | Containers that must be running | `tapu-agent` |
-| `READINESS_URL` | Optional HTTP readiness URL | Empty |
-| `MAX_WAIT_SECONDS` | Maximum startup wait time | `60` |
-| `CHECK_INTERVAL_SECONDS` | Time between checks | `2` |
+Example usage:
 
-## Installation
+```typescript
+import { wakeDevice } from "./keenetic.ts";
 
-Install the recovery script:
+const keeneticUrl = Deno.env.get("KEENETIC_URL");
+const keeneticUser = Deno.env.get("KEENETIC_USER");
+const keeneticPassword = Deno.env.get("KEENETIC_PASSWORD");
+const targetMac = Deno.env.get("TARGET_MAC");
+
+if (!keeneticUrl || !keeneticUser || !keeneticPassword || !targetMac) {
+  throw new Error("Required environment variables are missing.");
+}
+
+const result = await wakeDevice(targetMac, {
+  keeneticUrl,
+  keeneticUser,
+  keeneticPassword,
+});
+
+console.log(result);
+```
+
+Run it with:
 
 ```bash
-sudo install -Dm755 docker-recovery.sh \
-  /usr/local/bin/docker-recovery.sh
+deno run --allow-net --allow-env example.ts
 ```
 
-Run it manually:
+### Permission Model
 
-```bash
-sudo /usr/local/bin/docker-recovery.sh
-```
+Deno uses explicit permissions.
 
-## Manual Test
-
-Check Docker:
-
-```bash
-systemctl status docker --no-pager
-```
-
-Check all containers:
-
-```bash
-docker ps -a
-```
-
-Check a specific container:
-
-```bash
-docker inspect -f '{{.State.Status}}' tapu-agent
-```
-
-Check the application manually:
-
-```bash
-curl -I http://127.0.0.1:8000
-```
-
-## Readiness Checks
-
-A running container does not necessarily mean that the application inside it
-is ready.
-
-For example:
+The example requires:
 
 ```text
-Container state: running
-Application state: still starting
+--allow-net
 ```
 
-If `READINESS_URL` is configured, the script waits until the endpoint returns
-an HTTP response.
+because it connects to the Keenetic router.
 
-The response may be:
-
-- `200 OK`
-- `401 Unauthorized`
-- `403 Forbidden`
-- Another expected application response
-
-The important condition is that the application is reachable.
-
-## Security Warnings
-
-This module requires root or Docker socket access.
-
-- Docker access is effectively root-level access.
-- Do not expose `/var/run/docker.sock` to the public internet.
-- Do not accept container names directly from users.
-- Keep the container list statically configured.
-- Review every container name before adding it.
-- Do not run arbitrary Docker commands from HTTP request parameters.
-- Keep Docker images updated and use trusted image sources.
-- Do not include registry passwords or private image credentials in the script.
-- Protect the recovery script from non-root modification.
-
-Check file permissions:
-
-```bash
-ls -l /usr/local/bin/docker-recovery.sh
-```
-
-Expected ownership:
+When environment variables are used, it also requires:
 
 ```text
-root root
+--allow-env
 ```
 
-## Limitations
-
-This module does not:
-
-- Repair broken Docker images.
-- Rebuild containers automatically.
-- Validate application data.
-- Check database integrity.
-- Repair failed storage mounts.
-- Manage Docker Compose projects automatically.
-- Restart every container by default.
-
-Only explicitly configured containers should be managed.
-
-## Troubleshooting
-
-### Docker is not running
+Avoid using:
 
 ```bash
-systemctl status docker --no-pager
-journalctl -u docker -n 100 --no-pager
+deno run -A
 ```
 
-Start Docker manually:
+in production unless all permissions are fully understood.
 
-```bash
-sudo systemctl start docker
+## Using Another Language
+
+The Keenetic API flow is not limited to Deno.
+
+The same process can be implemented in:
+
+- Python
+- Go
+- Node.js
+- Rust
+- Shell scripts with `curl`
+
+The required sequence is:
+
+```text
+1. Request /auth.
+2. Read the challenge and realm.
+3. Calculate the challenge-response hash.
+4. Authenticate and receive a session cookie.
+5. Send a POST request to /rci/ip/hotspot/wake.
 ```
 
-### A container repeatedly stops
-
-Check its logs:
-
-```bash
-docker logs --tail 100 <container-name>
-```
-
-Check its state:
-
-```bash
-docker inspect <container-name>
-```
-
-### The container is running but the application is unavailable
-
-Check listening ports:
-
-```bash
-ss -tlnp
-```
-
-Check the application locally:
-
-```bash
-curl -v http://127.0.0.1:8000
-```
-
-Check container logs:
-
-```bash
-docker logs --tail 100 <container-name>
-```
-
-## Uninstallation
-
-Remove the recovery script:
-
-```bash
-sudo rm -f /usr/local/bin/docker-recovery.sh
-```
+The TypeScript implementation is provided as a reusable Deno module.
 
 ## License
 
