@@ -1,0 +1,7 @@
+[Unit]
+Description=Check whether the system should be suspended
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auto-suspend.sh
