@@ -131,16 +131,16 @@ The exact endpoints may vary depending on the implementation.
 
 Typical endpoints include:
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/` | Login page |
-| `GET` | `/setup` | Initial configuration |
-| `GET` | `/api/status` | Gateway status |
-| `POST` | `/api/setup` | Initial setup |
-| `POST` | `/api/login` | User login |
-| `POST` | `/api/logout` | End session |
-| `GET` | `/api/ready/:token` | Target readiness check |
-| `ANY` | `/go/:token/*` | Authenticated reverse proxy |
+| Method | Endpoint            | Purpose                     |
+| ------ | ------------------- | --------------------------- |
+| `GET`  | `/`                 | Login page                  |
+| `GET`  | `/setup`            | Initial configuration       |
+| `GET`  | `/api/status`       | Gateway status              |
+| `POST` | `/api/setup`        | Initial setup               |
+| `POST` | `/api/login`        | User login                  |
+| `POST` | `/api/logout`       | End session                 |
+| `GET`  | `/api/ready/:token` | Target readiness check      |
+| `ANY`  | `/go/:token/*`      | Authenticated reverse proxy |
 
 ## Session Handling
 

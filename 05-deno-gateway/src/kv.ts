@@ -1,10 +1,5 @@
-import {
-  KeeneticSecrets,
-} from "../../04-keenetic-wol/keenetic.ts";
-import {
-  hashPassword,
-  verifyPassword,
-} from "./auth.ts";
+import { KeeneticSecrets } from "../../04-keenetic-wol/keenetic.ts";
+import { hashPassword, verifyPassword } from "./auth.ts";
 
 export interface GatewayDevice {
   mac: string;
@@ -23,6 +18,12 @@ interface StoredConfig {
   updatedAt: string;
 }
 
+function copyBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy;
+}
+
 const CONFIG_KEY = ["wake-on-demand", "gateway-config"];
 
 const kv = await Deno.openKv();
@@ -37,7 +38,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
 
@@ -45,10 +46,10 @@ function base64ToBytes(value: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
 
-  return bytes;
+  return copyBytes(bytes);
 }
 
-function getEncryptionKeyBytes(): Uint8Array {
+function getEncryptionKeyBytes(): Uint8Array<ArrayBuffer> {
   const encodedKey = Deno.env.get("ENCRYPTION_KEY");
 
   if (!encodedKey) {
@@ -61,7 +62,7 @@ function getEncryptionKeyBytes(): Uint8Array {
     throw new Error("ENCRYPTION_KEY must decode to exactly 32 bytes.");
   }
 
-  return key;
+  return copyBytes(key);
 }
 
 async function getEncryptionKey(): Promise<CryptoKey> {

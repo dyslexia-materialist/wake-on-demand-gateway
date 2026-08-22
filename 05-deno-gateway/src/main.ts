@@ -1,57 +1,32 @@
 import { Application, Router } from "@oak/oak";
-import { wakeDevice } from "../../04-keenetic-wol/keenetic.ts";
-import { waitForTarget } from "./readiness.ts";
-import { proxyRequest } from "./proxy.ts";
 
-import {
-  getConfig,
-  initialize,
-  isInitialized,
-  verifyGatewayPassword,
-} from "./kv.ts";
+import { initialize, isInitialized, verifyGatewayPassword } from "./kv.ts";
 
-import {
-  createSession,
-  deleteSession,
-  getSession,
-} from "./session.ts";
+import { createSession, deleteSession } from "./session.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "6910");
 
 const router = new Router();
 
-function getBearerToken(request: Request): string | null {
-  const authorization = request.headers.get("authorization");
-
-  if (!authorization?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  return authorization.slice("Bearer ".length).trim();
-}
-
-function getSessionToken(context: any): string | null {
-  const bearerToken = getBearerToken(context.request.source);
-
-  if (bearerToken) {
-    return bearerToken;
-  }
-
-  try {
-    return context.cookies.get("session") ?? null;
-  } catch {
-    return null;
-  }
+function getFormValue(
+  form: FormData,
+  name: string,
+): string {
+  return form.get(name)?.toString().trim() ?? "";
 }
 
 router.get("/", async (context) => {
-  if (await isInitialized()) {
-    context.response.headers.set(
-      "Content-Type",
-      "text/html; charset=utf-8",
-    );
+  if (!await isInitialized()) {
+    context.response.redirect("/setup");
+    return;
+  }
 
-    context.response.body = `
+  context.response.headers.set(
+    "Content-Type",
+    "text/html; charset=utf-8",
+  );
+
+  context.response.body = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -67,16 +42,12 @@ router.get("/", async (context) => {
       Password:
       <input type="password" name="password" required>
     </label>
+
     <button type="submit">Login</button>
   </form>
 </body>
 </html>
 `;
-
-    return;
-  }
-
-  context.response.redirect("/setup");
 });
 
 router.get("/setup", async (context) => {
@@ -149,14 +120,12 @@ router.get("/setup", async (context) => {
 </body>
 </html>
 `;
-
-  return;
 });
 
 router.get("/api/status", async (context) => {
   context.response.body = {
-    initialized: await isInitialized(),
     service: "wake-on-demand-gateway",
+    initialized: await isInitialized(),
     timestamp: new Date().toISOString(),
   };
 });
@@ -171,14 +140,14 @@ router.post("/api/setup", async (context) => {
     return;
   }
 
-  const body = await context.request.body.form();
+  const form = await context.request.body.form();
 
-  const password = body.get("password")?.toString() ?? "";
-  const keeneticUrl = body.get("keeneticUrl")?.toString() ?? "";
-  const keeneticUser = body.get("keeneticUser")?.toString() ?? "";
-  const keeneticPassword = body.get("keeneticPassword")?.toString() ?? "";
-  const serviceUrl = body.get("serviceUrl")?.toString() ?? "";
-  const mac = body.get("mac")?.toString() ?? "";
+  const password = getFormValue(form, "password");
+  const keeneticUrl = getFormValue(form, "keeneticUrl");
+  const keeneticUser = getFormValue(form, "keeneticUser");
+  const keeneticPassword = getFormValue(form, "keeneticPassword");
+  const serviceUrl = getFormValue(form, "serviceUrl");
+  const mac = getFormValue(form, "mac");
 
   if (password.length < 12) {
     context.response.status = 400;
@@ -231,8 +200,8 @@ router.post("/api/setup", async (context) => {
 });
 
 router.post("/api/login", async (context) => {
-  const body = await context.request.body.form();
-  const password = body.get("password")?.toString() ?? "";
+  const form = await context.request.body.form();
+  const password = getFormValue(form, "password");
 
   const valid = await verifyGatewayPassword(password);
 
@@ -245,66 +214,6 @@ router.post("/api/login", async (context) => {
     return;
   }
 
-  const config = await getConfig();
-
-  if (!config) {
-    context.response.status = 500;
-    context.response.body = {
-      success: false,
-      message: "Gateway configuration is not available.",
-    };
-    return;
-  }
-
-  const device = config.devices[0];
-
-  if (!device) {
-    context.response.status = 500;
-    context.response.body = {
-      success: false,
-      message: "No Wake-on-LAN device is configured.",
-    };
-    return;
-  }
-
-  const wakeResult = await wakeDevice(device.mac, {
-    keeneticUrl: config.keeneticUrl,
-    keeneticUser: config.keeneticUser,
-    keeneticPassword: config.keeneticPassword,
-  });
-
-  if (!wakeResult.success) {
-    context.response.status = 502;
-    context.response.body = {
-      success: false,
-      message: "Wake-on-LAN request failed.",
-      detail: wakeResult.message,
-    };
-    return;
-  }
-
-  const readinessResult = await waitForTarget(
-  config.serviceUrl,
-  {
-    maxWaitMs: 90_000,
-    retryIntervalMs: 2_000,
-    onRetry: (attempt, error) => {
-      console.log(
-        `Target readiness attempt ${attempt} failed: ${error}`,
-      );
-    },
-  },
-);
-
-if (!readinessResult.ready) {
-  context.response.status = 504;
-  context.response.body = {
-    success: false,
-    message: "Target server did not become ready in time.",
-  };
-  return;
-}
-
   const session = createSession("gateway-user");
 
   context.cookies.set("session", session.token, {
@@ -315,14 +224,18 @@ if (!readinessResult.ready) {
     path: "/",
   });
 
-  context.response.redirect(`/go/${session.token}/`);
+  context.response.body = {
+    success: true,
+    message: "Login successful.",
+    expiresAt: session.expiresAt,
+  };
+});
 
+router.post("/api/logout", async (context) => {
+  const sessionToken = await context.cookies.get("session");
 
-router.post("/api/logout", (context) => {
-  const token = getSessionToken(context);
-
-  if (token) {
-    deleteSession(token);
+  if (sessionToken) {
+    deleteSession(sessionToken);
   }
 
   context.cookies.delete("session", {
@@ -355,72 +268,6 @@ app.use(async (context, next) => {
   context.response.headers.set("Referrer-Policy", "no-referrer");
 
   await next();
-});
-
-app.use(async (context, next) => {
-  const pathname = context.request.url.pathname;
-
-  if (!pathname.startsWith("/go/")) {
-    await next();
-    return;
-  }
-
-  const rest = pathname.slice("/go/".length);
-  const separatorIndex = rest.indexOf("/");
-
-  const token = separatorIndex === -1
-    ? rest
-    : rest.slice(0, separatorIndex);
-
-  const targetPath = separatorIndex === -1
-    ? "/"
-    : rest.slice(separatorIndex);
-
-  if (!token || token.length < 20) {
-    context.response.status = 401;
-    context.response.body = "Unauthorized";
-    return;
-  }
-
-  const session = getSession(token);
-
-  if (!session) {
-    context.response.status = 401;
-    context.response.body = "Session expired or invalid.";
-    return;
-  }
-
-  const config = await getConfig();
-
-  if (!config) {
-    context.response.status = 500;
-    context.response.body = "Gateway configuration is unavailable.";
-    return;
-  }
-
-  try {
-    const upstreamResponse = await proxyRequest(
-      context.request.source,
-      config.serviceUrl,
-      targetPath,
-      context.request.url.search,
-    );
-
-    context.response.status = upstreamResponse.status;
-
-    for (const [name, value] of upstreamResponse.headers.entries()) {
-      context.response.headers.set(name, value);
-    }
-
-    context.response.body = upstreamResponse.body;
-  } catch (error) {
-    console.error("Proxy request failed:", error);
-
-    context.response.status = 502;
-    context.response.body = {
-      error: "Proxy request failed.",
-    };
-  }
 });
 
 app.use(router.routes());

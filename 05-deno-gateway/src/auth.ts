@@ -4,6 +4,12 @@ const ITERATIONS = 210_000;
 const SALT_LENGTH = 16;
 const KEY_LENGTH = 256;
 
+function copyBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
 
@@ -47,6 +53,8 @@ async function derivePasswordHash(
   salt: Uint8Array,
   iterations: number,
 ): Promise<Uint8Array> {
+  const safeSalt = copyBytes(salt);
+
   const passwordKey = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -58,7 +66,7 @@ async function derivePasswordHash(
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: DERIVATION_ALGORITHM,
-      salt,
+      salt: safeSalt,
       iterations,
       hash: HASH_ALGORITHM,
     },
